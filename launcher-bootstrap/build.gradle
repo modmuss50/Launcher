@@ -1,6 +1,5 @@
 plugins {
     id "com.github.johnrengelman.shadow"
-    id 'io.franzbecker.gradle-lombok'
 }
 
 jar {
