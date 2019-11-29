@@ -10,6 +10,7 @@ import com.beust.jcommander.JCommander;
 import com.beust.jcommander.ParameterException;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectWriter;
 import com.google.common.base.Strings;
@@ -207,6 +208,70 @@ public class PackageBuilder {
             } else {
                 log.warning("The file at " + file.getAbsolutePath() + " did not appear to have an " +
                         "install_profile.json file inside -- is it actually an installer for a mod loader?");
+            }
+        } finally {
+            closer.close();
+            jarFile.close();
+        }
+        installFabric(loaderLibraries, file, librariesDir);
+    }
+
+    private void installFabric(LinkedHashSet<Library> loaderLibraries, File file, File librariesDir) throws IOException {
+        log.info("Installing " + file.getName() + "...");
+
+        JarFile jarFile = new JarFile(file);
+        Closer closer = Closer.create();
+
+        try {
+            ZipEntry profileEntry = BuilderUtils.getZipEntry(jarFile, "fabric-installer.json");
+
+            if (profileEntry != null) {
+                InputStream stream = jarFile.getInputStream(profileEntry);
+
+                // Read file
+                String data = CharStreams.toString(closer.register(new InputStreamReader(stream)));
+                data = data.replaceAll(",\\s*\\}", "}"); // Fix issues with trailing commas
+
+                JsonNode installerProfile = mapper.readValue(data, JsonNode.class);
+                VersionManifest version = manifest.getVersionManifest();
+
+                JsonNode commonLibs = installerProfile.get("libraries").get("common");
+
+                commonLibs.forEach(jsonNode -> {
+                    Library library = new Library();
+                    library.setName(jsonNode.get("name").textValue());
+                    library.setBaseUrl(jsonNode.get("url").textValue());
+                    loaderLibraries.add(library);
+                });
+
+                //Add intermediary
+                Library intermediary = new Library();
+                intermediary.setName("net.fabricmc:intermediary:" + version.getId());
+                intermediary.setBaseUrl("https://maven.fabricmc.net/");
+                loaderLibraries.add(intermediary);
+
+                String fabricVersion = "unknown";
+
+                {
+                    ZipEntry modEntry = BuilderUtils.getZipEntry(jarFile, "fabric.mod.json");
+                    InputStream modStream = jarFile.getInputStream(modEntry);
+
+                    // Read file
+                    String modData = CharStreams.toString(closer.register(new InputStreamReader(modStream)));
+                    modData = modData.replaceAll(",\\s*\\}", "}"); // Fix issues with trailing commas
+
+                    JsonNode installerMod = mapper.readValue(modData, JsonNode.class);
+
+                    fabricVersion = installerMod.get("version").textValue();
+                }
+
+                //Add loader
+                Library loader = new Library();
+                loader.setName("net.fabricmc:fabric-loader:" + fabricVersion);
+                loader.setBaseUrl("https://maven.fabricmc.net/");
+                loaderLibraries.add(loader);
+
+                version.setMainClass(installerProfile.get("mainClass").get("client").textValue());
             }
         } finally {
             closer.close();
